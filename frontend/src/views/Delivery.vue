@@ -45,88 +45,106 @@
     </el-row>
 
     <el-row :gutter="16">
-      <el-col :span="10">
-        <el-card shadow="hover">
+      <el-col :span="14">
+        <el-card shadow="hover" class="map-card">
           <template #header>
             <div style="display: flex; align-items: center; gap: 8px;">
               <el-icon :size="18" color="#409eff"><MapLocation /></el-icon>
-              <span style="font-weight: 600; font-size: 15px;">送货路线图</span>
+              <span style="font-weight: 600; font-size: 15px;">配送路线地图</span>
+              <el-tag v-if="routeData && routeData.route.length > 0" type="info" size="small" style="margin-left: 8px;">
+                点击地图上的标号可查看详情
+              </el-tag>
             </div>
           </template>
-          <div style="position: relative; background: #f8fafc; border-radius: 8px; padding: 20px; min-height: 560px;">
-            <svg v-if="routeData && routeData.route.length > 0"
-                 viewBox="0 0 420 560"
-                 style="width: 100%; height: 560px;"
+          <div class="map-wrapper">
+            <div v-if="!routeData || routeData.route.length === 0" class="map-empty">
+              <el-empty description="当日暂无送货安排" :image-size="80" />
+            </div>
+            <l-map
+              v-else
+              ref="mapRef"
+              :zoom="12"
+              :center="mapCenter"
+              :useGlobalLeaflet="false"
+              class="leaflet-map"
             >
-              <defs>
-                <marker id="arrow" markerWidth="10" markerHeight="7"
-                        refX="9" refY="3.5" orient="auto">
-                  <polygon points="0 0, 10 3.5, 0 7" fill="#409eff" />
-                </marker>
-              </defs>
+              <l-tile-layer
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                layer-type="base"
+                name="OpenStreetMap"
+              />
 
-              <circle :cx="warehousePos.x" :cy="warehousePos.y" r="26" fill="#ff6b6b" />
-              <circle :cx="warehousePos.x" :cy="warehousePos.y" r="20" fill="#fff" />
-              <text :x="warehousePos.x" :y="warehousePos.y - 34"
-                    text-anchor="middle" font-size="12" fill="#606266" font-weight="600">
-                仓库(起点)
-              </text>
-              <text :x="warehousePos.x" :y="warehousePos.y + 4"
-                    text-anchor="middle" font-size="14" fill="#ff6b6b" font-weight="bold">
-                仓
-              </text>
+              <l-polyline :lat-lngs="polylinePoints" :color="'#409eff'" :weight="4" :opacity="0.85" :dash-array="'8, 8'">
+              </l-polyline>
 
-              <template v-for="(p, i) in routeData.route" :key="p.pickup_point.id">
-                <line
-                  v-if="i === 0"
-                  :x1="warehousePos.x"
-                  :y1="warehousePos.y + 26"
-                  :x2="getPointPos(i).x"
-                  :y2="getPointPos(i).y - 24"
-                  stroke="#409eff"
-                  stroke-width="2.5"
-                  stroke-dasharray="6,4"
-                  marker-end="url(#arrow)"
-                />
-                <line
-                  v-else
-                  :x1="getPointPos(i - 1).x"
-                  :y1="getPointPos(i - 1).y + 24"
-                  :x2="getPointPos(i).x"
-                  :y2="getPointPos(i).y - 24"
-                  stroke="#409eff"
-                  stroke-width="2.5"
-                  stroke-dasharray="6,4"
-                  marker-end="url(#arrow)"
-                />
+              <l-marker
+                :lat-lng="[routeData.warehouse_lat, routeData.warehouse_lng]"
+                :icon="warehouseIcon"
+              >
+                <l-popup>
+                  <div class="popup-content">
+                    <div class="popup-title warehouse">
+                      <el-icon><OfficeBuilding /></el-icon>
+                      中央仓库（起点）
+                    </div>
+                    <div class="popup-info">坐标: {{ routeData.warehouse_lat }}, {{ routeData.warehouse_lng }}</div>
+                  </div>
+                </l-popup>
+              </l-marker>
 
-                <rect :x="getPointPos(i).x - 32" :y="getPointPos(i).y - 20"
-                      width="64" height="40" rx="20"
-                      :fill="p.status === 'loaded' ? '#67c23a' : p.status ? '#409eff' : '#e6a23c'" />
-                <rect :x="getPointPos(i).x - 28" :y="getPointPos(i).y - 16"
-                      width="56" height="32" rx="16" fill="#fff" />
-                <text :x="getPointPos(i).x" :y="getPointPos(i).y + 5"
-                      text-anchor="middle" font-size="15"
-                      :fill="p.status === 'loaded' ? '#67c23a' : p.status ? '#409eff' : '#e6a23c'"
-                      font-weight="bold">
-                  {{ p.sequence }}
-                </text>
-                <text :x="getPointPos(i).x" :y="getPointPos(i).y - 30"
-                      text-anchor="middle" font-size="11" fill="#303133" font-weight="500">
-                  {{ truncateText(p.pickup_point.name, 12) }}
-                </text>
-                <text :x="getPointPos(i).x" :y="getPointPos(i).y + 46"
-                      text-anchor="middle" font-size="11" fill="#909399">
-                  {{ p.distance_km }}km · {{ p.order_count }}单
-                </text>
-              </template>
-            </svg>
-            <el-empty v-else description="暂无送货数据" :image-size="80" />
+              <l-marker
+                v-for="(p, index) in routeData.route"
+                :key="p.pickup_point.id"
+                :lat-lng="[p.pickup_point.latitude, p.pickup_point.longitude]"
+                :icon="getPointIcon(p, index)"
+                @click="activePointIndex = index"
+              >
+                <l-popup>
+                  <div class="popup-content">
+                    <div class="popup-title">
+                      <span class="seq-badge" :class="getStatusClass(p.status)">{{ p.sequence }}</span>
+                      <span class="name-text">{{ p.pickup_point.name }}</span>
+                    </div>
+                    <div class="popup-info">
+                      <div><span class="label">地址:</span> {{ p.pickup_point.address }}</div>
+                      <div><span class="label">团长:</span> {{ p.pickup_point.leader?.name || '-' }} ({{ p.pickup_point.leader?.phone || '-' }})</div>
+                      <div><span class="label">订单:</span> {{ p.order_count }} 单 / {{ p.total_items }} 件</div>
+                      <div><span class="label">距仓库:</span> {{ p.distance_km }} km</div>
+                      <div v-if="p.slip_no"><span class="label">配货单:</span> {{ p.slip_no }}</div>
+                      <div>
+                        <span class="label">状态:</span>
+                        <el-tag size="small" :type="getStatusTag(p.status)">
+                          {{ statusText(p.status) }}
+                        </el-tag>
+                      </div>
+                    </div>
+                  </div>
+                </l-popup>
+              </l-marker>
+
+              <l-control position="bottomright" class="legend-control">
+                <div class="map-legend">
+                  <div class="legend-title">图例</div>
+                  <div class="legend-item">
+                    <span class="legend-marker warehouse-marker">仓</span>
+                    <span>仓库起点</span>
+                  </div>
+                  <div class="legend-item">
+                    <span class="legend-marker num-marker">1</span>
+                    <span>送货点（按顺序）</span>
+                  </div>
+                  <div class="legend-item">
+                    <span class="legend-line"></span>
+                    <span>配送路线</span>
+                  </div>
+                </div>
+              </l-control>
+            </l-map>
           </div>
         </el-card>
       </el-col>
 
-      <el-col :span="14">
+      <el-col :span="10">
         <el-card shadow="hover">
           <template #header>
             <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -148,7 +166,7 @@
             <el-timeline-item
               type="danger"
               size="large"
-              :timestamp="'出发'"
+              timestamp="出发"
               timestamp-placement="top"
             >
               <div style="display: flex; justify-content: space-between; align-items: center;">
@@ -172,8 +190,14 @@
                 :timestamp="`第 ${p.sequence} 站 · 距起点 ${p.distance_km} km`"
                 timestamp-placement="top"
                 :hollow="!p.status || p.status === 'created'"
+                @click="focusOnPoint(i)"
+                style="cursor: pointer;"
               >
-                <el-card shadow="never" :body-style="{ padding: '14px 16px' }" style="border-color: #ebeef5;">
+                <el-card
+                  shadow="never"
+                  :body-style="{ padding: '14px 16px' }"
+                  :class="['point-card', activePointIndex === i ? 'active' : '']"
+                >
                   <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div style="flex: 1;">
                       <div style="display: flex; align-items: center; gap: 10px;">
@@ -222,7 +246,7 @@
                           type="success"
                           :icon="Van"
                           :disabled="updatingId === p.packing_slip_id"
-                          @click="markAsLoaded(p)"
+                          @click.stop="markAsLoaded(p)"
                         >
                           标记已装车
                         </el-button>
@@ -235,8 +259,6 @@
                       </div>
                     </div>
                   </div>
-
-                  <el-divider direction="vertical" v-if="i < (routeData?.route?.length || 0) - 1" style="display: none;" />
                 </el-card>
               </el-timeline-item>
             </template>
@@ -248,12 +270,15 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import {
   Refresh, MapLocation, List, Van, User, Location,
   OfficeBuilding, Document, Check
 } from '@element-plus/icons-vue'
+import { LMap, LTileLayer, LMarker, LPopup, LPolyline, LControl } from '@vue-leaflet/vue-leaflet'
+import L from 'leaflet'
+import 'leaflet/dist/leaflet.css'
 import dayjs from 'dayjs'
 import { getDeliveryRoute, getRouteWithoutPacking, updatePackingSlipStatus } from '../api'
 
@@ -261,12 +286,62 @@ const deliveryDate = ref(dayjs().format('YYYY-MM-DD'))
 const includeUnpacked = ref(true)
 const routeData = ref(null)
 const updatingId = ref(null)
+const mapRef = ref(null)
+const activePointIndex = ref(-1)
 
-const warehousePos = { x: 210, y: 50 }
+const defaultCenter = [39.9042, 116.4074]
+const mapCenter = ref(defaultCenter)
 
 const totalOrderCount = computed(() =>
   (routeData.value?.route || []).reduce((s, p) => s + (p.order_count || 0), 0)
 )
+
+const polylinePoints = computed(() => {
+  if (!routeData.value || !routeData.value.route.length) return []
+  const points = [[routeData.value.warehouse_lat, routeData.value.warehouse_lng]]
+  routeData.value.route.forEach(p => {
+    points.push([p.pickup_point.latitude, p.pickup_point.longitude])
+  })
+  return points
+})
+
+function createNumberedIcon(num, status) {
+  const color = status === 'loaded' ? '#67c23a' : status ? '#409eff' : '#e6a23c'
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="40" height="52" viewBox="0 0 40 52">
+      <path d="M20 0 C9 0 0 9 0 20 C0 32 12 44 20 52 C28 44 40 32 40 20 C40 9 31 0 20 0 Z"
+            fill="${color}" stroke="#fff" stroke-width="2"/>
+      <circle cx="20" cy="19" r="12" fill="#fff"/>
+      <text x="20" y="24" text-anchor="middle" font-size="14" font-weight="bold" fill="${color}">${num}</text>
+    </svg>
+  `
+  return L.divIcon({
+    className: 'numbered-marker',
+    html: svg,
+    iconSize: [40, 52],
+    iconAnchor: [20, 52],
+    popupAnchor: [0, -48]
+  })
+}
+
+const warehouseIcon = L.divIcon({
+  className: 'warehouse-marker-icon',
+  html: `
+    <svg xmlns="http://www.w3.org/2000/svg" width="44" height="56" viewBox="0 0 44 56">
+      <path d="M22 0 C10 0 0 10 0 22 C0 35 13 48 22 56 C31 48 44 35 44 22 C44 10 34 0 22 0 Z"
+            fill="#ff4d4f" stroke="#fff" stroke-width="2"/>
+      <circle cx="22" cy="21" r="13" fill="#fff"/>
+      <text x="22" y="27" text-anchor="middle" font-size="14" font-weight="bold" fill="#ff4d4f">仓</text>
+    </svg>
+  `,
+  iconSize: [44, 56],
+  iconAnchor: [22, 56],
+  popupAnchor: [0, -52]
+})
+
+function getPointIcon(p, index) {
+  return createNumberedIcon(p.sequence, p.status)
+}
 
 function getStatusType(status) {
   if (!status) return 'warning'
@@ -275,21 +350,48 @@ function getStatusType(status) {
   return 'primary'
 }
 
-function truncateText(text, maxLen) {
-  if (!text) return ''
-  return text.length > maxLen ? text.substring(0, maxLen) + '...' : text
+function getStatusTag(status) {
+  if (!status) return 'warning'
+  if (status === 'loaded') return 'success'
+  if (status === 'printed') return 'info'
+  return 'primary'
 }
 
-function getPointPos(index) {
-  const total = routeData.value?.route?.length || 1
-  const startY = 150
-  const spacing = Math.min(80, (500 - startY) / Math.max(total, 1))
-  const baseX = 210
-  const offsetX = index % 2 === 0 ? -70 : 70
-  return {
-    x: baseX + (total > 1 ? offsetX * (index / (total - 1 || 1)) * 0.6 : 0),
-    y: startY + index * spacing
+function getStatusClass(status) {
+  if (!status) return 'warning'
+  if (status === 'loaded') return 'success'
+  if (status === 'printed') return 'info'
+  return 'primary'
+}
+
+function statusText(status) {
+  if (!status) return '待打包'
+  if (status === 'created') return '已生成'
+  if (status === 'printed') return '已打印'
+  if (status === 'loaded') return '已装车'
+  return status
+}
+
+function focusOnPoint(index) {
+  activePointIndex.value = index
+  if (mapRef.value && routeData.value && routeData.value.route[index]) {
+    const p = routeData.value.route[index]
+    mapRef.value.leafletObject.setView([p.pickup_point.latitude, p.pickup_point.longitude], 14)
   }
+}
+
+function fitMapBounds() {
+  if (!mapRef.value || !routeData.value || !routeData.value.route.length) return
+  const bounds = []
+  bounds.push([routeData.value.warehouse_lat, routeData.value.warehouse_lng])
+  routeData.value.route.forEach(p => {
+    bounds.push([p.pickup_point.latitude, p.pickup_point.longitude])
+  })
+  nextTick(() => {
+    if (mapRef.value) {
+      mapRef.value.leafletObject.fitBounds(bounds, { padding: [60, 60] })
+    }
+  })
 }
 
 async function loadData() {
@@ -297,6 +399,12 @@ async function loadData() {
     const fn = includeUnpacked.value ? getRouteWithoutPacking : getDeliveryRoute
     routeData.value = await fn({
       delivery_date: deliveryDate.value
+    })
+    if (routeData.value && routeData.value.route.length > 0) {
+      mapCenter.value = [routeData.value.warehouse_lat, routeData.value.warehouse_lng]
+    }
+    nextTick(() => {
+      fitMapBounds()
     })
   } catch (e) {
     console.error(e)
@@ -317,7 +425,175 @@ async function markAsLoaded(point) {
   }
 }
 
+watch(
+  () => routeData.value?.route?.length,
+  () => {
+    fitMapBounds()
+  }
+)
+
 onMounted(() => {
   loadData()
 })
 </script>
+
+<style>
+.leaflet-map {
+  width: 100%;
+  height: 600px;
+  border-radius: 6px;
+}
+
+.map-card .el-card__body {
+  padding: 0 !important;
+}
+
+.map-wrapper {
+  position: relative;
+}
+
+.map-empty {
+  height: 600px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #f5f7fa;
+}
+
+.numbered-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.warehouse-marker-icon {
+  background: transparent !important;
+  border: none !important;
+}
+
+.popup-content {
+  min-width: 220px;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.popup-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.popup-title.warehouse {
+  color: #ff4d4f;
+}
+
+.seq-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: bold;
+}
+.seq-badge.primary { background: #409eff; }
+.seq-badge.success { background: #67c23a; }
+.seq-badge.warning { background: #e6a23c; }
+.seq-badge.info    { background: #909399; }
+
+.name-text {
+  font-size: 14px;
+}
+
+.popup-info {
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.8;
+}
+
+.popup-info .label {
+  color: #909399;
+  margin-right: 4px;
+}
+
+.point-card {
+  transition: all 0.2s ease;
+  border-color: #ebeef5;
+}
+
+.point-card:hover {
+  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+  transform: translateX(4px);
+}
+
+.point-card.active {
+  border-color: #409eff;
+  box-shadow: 0 2px 12px 0 rgba(64, 158, 255, 0.3);
+  transform: translateX(4px);
+}
+
+.map-legend {
+  background: rgba(255, 255, 255, 0.95);
+  padding: 10px 14px;
+  border-radius: 6px;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.15);
+  font-size: 12px;
+  color: #606266;
+}
+
+.legend-title {
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.legend-marker {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 28px;
+  font-size: 10px;
+  font-weight: bold;
+  color: #fff;
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+}
+
+.legend-marker.warehouse-marker {
+  background: #ff4d4f;
+}
+
+.legend-marker.num-marker {
+  background: #409eff;
+}
+
+.legend-marker span {
+  transform: rotate(45deg);
+}
+
+.legend-line {
+  width: 24px;
+  height: 3px;
+  background: repeating-linear-gradient(to right, #409eff 0, #409eff 6px, transparent 6px, transparent 10px);
+  border-radius: 2px;
+}
+
+.leaflet-control-attribution {
+  font-size: 10px !important;
+}
+</style>
