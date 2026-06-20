@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from ..database import get_db
 from .. import models, schemas
+from ..utils.distance import _validate_lat_lon
 
 router = APIRouter(prefix="/api/pickup-points", tags=["自提点管理"])
 
@@ -23,6 +24,10 @@ def get_pickup_point(point_id: int, db: Session = Depends(get_db)):
 
 @router.post("", response_model=schemas.PickupPoint)
 def create_pickup_point(data: schemas.PickupPointCreate, db: Session = Depends(get_db)):
+    try:
+        _validate_lat_lon(data.latitude, data.longitude)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     point = models.PickupPoint(**data.model_dump())
     db.add(point)
     db.commit()
